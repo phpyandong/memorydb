@@ -29,6 +29,7 @@ func NewMemDB(schema *DBSchema) (*MemDB,error){
 	if err := db.initialize(); err != nil{
 		return nil,err
 	}
+	return db,nil
 }
 //initialize用于设置创建后使用的数据库。在分配一个MemDB之后，这个函数只能调用一次。
 func (db *MemDB) initialize() error{
