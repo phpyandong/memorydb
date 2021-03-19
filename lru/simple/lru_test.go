@@ -49,7 +49,7 @@ func TestEvict(t *testing.T) {
 
 	lru := NewCache(20)
 	lru.OnEvicted = onEvictedFun
-	for i := 0; i < 22; i++ {
+	for i := 0; i < 25; i++ {
 		lru.Add(fmt.Sprintf("myKey%d", i), 1234)
 	}
 
