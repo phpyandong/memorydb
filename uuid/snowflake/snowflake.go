@@ -48,7 +48,7 @@ type Node struct{
 	mutex sync.Mutex
 	epoch time.Time
 
-	time int64 //41位 毫秒时间戳
+	lasttime int64 //41位 毫秒时间戳
 	node int64 // 5位 ，数据中心ID (用于对数据中心进行编码)
 	step int64 // 12位 ，序列号。用于同一毫秒产生ID的序列 （自增id）
 
@@ -70,7 +70,7 @@ func NewNode(node int64)(*Node,error){
 	n.node = node //节点数量
 	n.nodeMax = -1 ^ (-1 << NodeBits)
 	n.nodeMask = n.nodeMax << StepBits //12
-	n.stepMask = -1 ^ (-1 << StepBits)
+	n.stepMask = -1 ^ (-1 << StepBits) //12位的最大值
 	n.timeShift = NodeBits + StepBits //10+12
 	n.nodeShift = StepBits
 	var curTime = time.Now()
@@ -99,16 +99,35 @@ func NewNode(node int64)(*Node,error){
 	return &n ,nil
 }
 
-func (node *Node)Generate(){
+func (node *Node)Generate() int64{
 	node.mutex.Lock()
 	//服务启动的写死了
 	fmt.Println("epoch:",node.epoch)
-
+	//单调钟的核心应用
 	now := time.Since(node.epoch).Nanoseconds() /(1000 * 1000)
+	//老版本
+	//	now := time.Now().UnixNano() / 1000000 直接用的系统时间
+
 	fmt.Println("now:",now)
-	if now == node.time {
+	if now == node.lasttime {
 		fmt.Println("83 等于")
+		fmt.Printf("step1: %b",node.step+1)
+		fmt.Printf("step2: %b",node.stepMask)
+
 		node.step = (node.step +1) & node.stepMask
+		fmt.Printf("step3: %b",node.step )
+		fmt.Printf("step4:%b",(node.stepMask+1) & node.stepMask) //可以防止超过最大数 )
+		//如果超过最大数，结果则为0
+		if node.step == 0 {
+			//如果当前时间 小于上次的时间 进入死循环,
+			//直到过了1毫秒不再循环，相当于sleep 一毫秒，解决序列号用完的问题，
+			// 不用sleep的原因可能是避免任何使用普通系统时间的情况
+			for now <= node.lasttime {
+				now = time.Since(node.epoch).Nanoseconds() /(1000 * 1000)
+			}
+
+		}
+
 		fmt.Println("等于:",node.step)
 	}else{
 		fmt.Println("83 不等于")
@@ -116,7 +135,7 @@ func (node *Node)Generate(){
 		node.step = 0
 	}
 
-	node.time = now
+	node.lasttime = now
 	//r :=
 	r1 := (now) << node.timeShift //44位的时间戳左移22位  xxxxxxxxx 0000000
 	//fmt.Printf("r1:%b\n",r1)
@@ -129,4 +148,5 @@ func (node *Node)Generate(){
 	fmt.Println("结果：",r1|r2|r3)
 
 	node.mutex.Unlock()
+	return r1|r2|r3
 }
