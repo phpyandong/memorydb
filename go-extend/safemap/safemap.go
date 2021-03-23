@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"hash"
+	"fmt"
 )
 type IConcurrencyMap interface {
 	// Get 获取给定键值对应的元素值。若没有对应的元素值则返回nil
@@ -14,9 +15,9 @@ type IConcurrencyMap interface {
 	// Set 给指定的key 设置value ,若该键值已存在，则替换
 	Set(key interface{},elem interface{}) error
 	//Remove 删除给定键值对，并返回旧的元素值，若没有旧的元素，则返回nil
-	Remove(key interface{})(bool, error)
+	Remove(key interface{})(interface{}, error)
 	//Elements 获取并发Map中的全部元素
-	Elements() <-chan ConcurrencyMap
+	Elements() <-chan concurrencyElement
 }
 // ConcurrencyElement 存储的元素项
 type concurrencyElement struct {
@@ -30,7 +31,7 @@ type bucket struct{
 //ConcurrencyMap 是由多个小的map构成的
 type ConcurrencyMap struct {
 	sync.RWMutex
-	size int64
+	size int
 	pools []*bucket
 }
 //根据key 进行hash 然后取余，得到桶bucket的编号，将数据存到该bucket上
@@ -67,8 +68,11 @@ func (cm *ConcurrencyMap) getBucket(key interface{}) (*bucket,error){
 	hasher.Write(buffer.Bytes())
 
 	defer buffer.Reset()
+	fmt.Println("hs",hasher.Sum32())
 
-	return cm.pools[uint(hasher.Sum32()) & uint(cm.size)] ,nil
+	bucket := cm.pools[uint(hasher.Sum32()) % uint(cm.size)]
+	fmt.Println("bu",bucket)
+	return bucket ,nil
 }
 func (cmap *ConcurrencyMap) Get(key interface{}) (interface{}, error) {
 	bucket,err := cmap.getBucket(key)
@@ -77,7 +81,7 @@ func (cmap *ConcurrencyMap) Get(key interface{}) (interface{}, error) {
 	}
 	bucket.RLock()
 	v := bucket.items[key]
-	bucket.Unlock()
+	bucket.RUnlock()
 	return v,nil
 }
 
@@ -86,14 +90,51 @@ func (cmap *ConcurrencyMap) Set(key interface{}, elem interface{}) error {
 	if err != nil {
 		return err
 	}
+	bucket.Lock()
+	bucket.items[key] = elem
+	bucket.Unlock()
+	bucket2 ,err := cmap.getBucket(key)
+
+	fmt.Println("bucket2:",bucket2.items)
+	return nil
 }
 
-func (ConcurrencyMap) Remove(key interface{}) (bool, error) {
-	panic("implement me")
+func (cmap *ConcurrencyMap) Remove(key interface{}) (interface{}, error) {
+	bucket ,err := cmap.getBucket(key)
+	if err != nil {
+		return nil,err
+	}
+	bucket.Lock()
+	ele, ok := bucket.items[key]
+	if ok {
+		delete(bucket.items,key)
+	}
+	bucket.Unlock()
+	return ele ,nil
 }
 
-func (ConcurrencyMap) Elements() <-chan ConcurrencyMap {
-	panic("implement me")
+func (cmap *ConcurrencyMap) Elements() <-chan concurrencyElement {
+	chEle := make(chan concurrencyElement,2)
+	go func() {
+		defer func() {
+			//if err := recover();err != nil{
+			//	log.Errorf("error trigger,time:%v,err:%v",time.Now(),err)
+			//}
+		}()
+		for i:= 0; i< cmap.size ; i++  {
+			bucket := cmap.pools[i]
+			bucket.RLock()
+			for k,v := range bucket.items{
+				ele := 	concurrencyElement{Key:k,Value:v}
+				fmt.Println("push:k:",k,ele)
+				chEle <- ele
+			}
+			bucket.RUnlock()
+
+		}
+		close(chEle)
+	}()
+	return chEle
 }
 
 const DefaultPoolSize = 1 << 5
@@ -113,7 +154,7 @@ func NewConcurrencyMap(poolSizes ...uint) IConcurrencyMap{
 		}
 	}
 	return &ConcurrencyMap{
-		size :int64(size),
+		size :int(size),
 		pools:pools,
 	}
 }
